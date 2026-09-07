@@ -26,6 +26,7 @@ export class UsageMonitor {
   private active = false;
   private timer?: ReturnType<typeof setInterval>;
   private pending?: Pending;
+  private queuedActivity?: { promise: Promise<void> };
   private ownerKey?: string;
   private lastAttemptAt = -Infinity;
   private nextPollAt = 0;
@@ -54,6 +55,7 @@ export class UsageMonitor {
     this.timer = undefined;
     this.pending?.controller.abort();
     this.pending = undefined;
+    this.queuedActivity = undefined;
     this.ownerKey = undefined;
     this.state.snapshot = undefined;
     if (this.state.error?.code !== "rate-limited") this.state.error = undefined;
@@ -65,13 +67,31 @@ export class UsageMonitor {
 
   refresh(reason: RefreshReason = "manual"): Promise<void> {
     if (!this.active) return Promise.resolve();
-    if (this.pending) return this.pending.promise;
+    if (this.pending) {
+      if (reason !== "activity") return this.pending.promise;
+      // A query started before the conversation ended may contain old usage.
+      // Queue one fresh query after it; coalesce further completions while waiting.
+      if (!this.queuedActivity) {
+        const queued = { promise: Promise.resolve() };
+        this.queuedActivity = queued;
+        queued.promise = this.pending.promise.then(() => {
+          if (!this.active || this.queuedActivity !== queued) return;
+          this.queuedActivity = undefined;
+          return this.refresh("activity");
+        });
+      }
+      return this.queuedActivity.promise;
+    }
     const now = this.now();
     if (now < this.cooldownUntil) return Promise.resolve();
     if (reason === "poll" && this.state.snapshot && now < this.nextPollAt) return Promise.resolve();
     if (reason !== "manual" && this.failures > 0 && now < this.nextPollAt) return Promise.resolve();
-    const minGap = reason === "manual" ? 5_000 : 60_000;
-    if (now - this.lastAttemptAt < minGap) return Promise.resolve();
+    // Completion refreshes bypass the ordinary interval, but not error backoff
+    // or Retry-After. Even a short conversation needs a new quota reading.
+    if (reason !== "activity") {
+      const minGap = reason === "manual" ? 5_000 : 60_000;
+      if (now - this.lastAttemptAt < minGap) return Promise.resolve();
+    }
 
     this.lastAttemptAt = now;
     const pending: Pending = { controller: new AbortController(), promise: Promise.resolve() };

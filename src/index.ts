@@ -67,9 +67,10 @@ export default function codexUsage(pi: ExtensionAPI): void {
 
   pi.on("model_select", (_event, ctx) => synchronize(ctx));
   pi.on("agent_start", (_event, ctx) => synchronize(ctx));
-  pi.on("agent_end", (_event, ctx) => {
+  pi.on("agent_settled", (_event, ctx) => {
     synchronize(ctx);
-    // Faster feedback after actual work, but never one quota request per turn.
+    // Refresh after the whole conversation finishes, not intermediate tool turns
+    // or low-level agent_end events that may still auto-retry or continue.
     void monitor.refresh("activity");
   });
 

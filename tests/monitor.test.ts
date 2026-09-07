@@ -36,22 +36,101 @@ test("no work before start; one immediate refresh when activated", async (t) => 
   assert.equal(calls(), 1);
 });
 
-test("coalesces requests and enforces periodic/activity/manual cadence", async (t) => {
+test("coalesces requests and preserves poll/manual cadence", async (t) => {
   const { monitor, calls, advance } = setup(t);
   monitor.start();
   const first = monitor.refresh();
   assert.equal(first, monitor.refresh());
   await first;
+  advance(4_999);
   await monitor.refresh();
   assert.equal(calls(), 1);
+  advance(1);
+  await monitor.refresh();
+  assert.equal(calls(), 2);
   advance(60_000);
   await monitor.refresh("poll");
-  assert.equal(calls(), 1);
-  await monitor.refresh("activity");
   assert.equal(calls(), 2);
   advance(REFRESH_MS);
   await monitor.refresh("poll");
   assert.equal(calls(), 3);
+});
+
+test("every completed conversation refreshes even immediately after a successful query", async (t) => {
+  const { monitor, calls, advance } = setup(t);
+  monitor.start();
+  await monitor.refresh();
+  // Same clock value: neither a recent poll nor another completion may skip it.
+  await monitor.refresh("activity");
+  assert.equal(calls(), 2);
+  await monitor.refresh("activity");
+  assert.equal(calls(), 3);
+  advance(5_000);
+  await monitor.refresh("manual");
+  assert.equal(calls(), 4);
+  await monitor.refresh("activity");
+  assert.equal(calls(), 5);
+  await monitor.refresh("poll");
+  assert.equal(calls(), 5);
+  advance(REFRESH_MS);
+  await monitor.refresh("poll");
+  assert.equal(calls(), 6);
+});
+
+test("completion during an in-flight query queues one fresh follow-up instead of reusing old data", async (t) => {
+  const response = deferred<UsageSnapshot>();
+  const fetching = deferred<void>();
+  let calls = 0;
+  const { monitor } = setup(t, { fetch: async () => {
+    calls++;
+    if (calls === 1) {
+      fetching.resolve();
+      return response.promise;
+    }
+    return parseUsage(payload(90, 90), NOW);
+  } });
+  monitor.start();
+  const first = monitor.refresh("poll");
+  await fetching.promise;
+  const afterCompletion = monitor.refresh("activity");
+  assert.notEqual(afterCompletion, first);
+  assert.equal(afterCompletion, monitor.refresh("activity"));
+  assert.equal(calls, 1);
+  response.resolve(parseUsage(payload(), NOW));
+  await Promise.all([first, afterCompletion]);
+  assert.equal(calls, 2);
+  assert.equal(monitor.state.snapshot?.fiveHour?.remainingPercent, 10);
+  assert.equal(monitor.state.refreshing, false);
+});
+
+test("queued completion refresh respects failures and Retry-After from the in-flight query", async (t) => {
+  for (const error of [new UsageError("network"), new UsageError("rate-limited", 900_000)]) {
+    const response = deferred<UsageSnapshot>();
+    const fetching = deferred<void>();
+    let calls = 0;
+    const { monitor, advance } = setup(t, { fetch: async () => {
+      calls++;
+      if (calls === 1) {
+        fetching.resolve();
+        return response.promise;
+      }
+      return parseUsage(payload(), NOW);
+    } });
+    monitor.start();
+    await fetching.promise;
+    const afterCompletion = monitor.refresh("activity");
+    response.reject(error);
+    await afterCompletion;
+    assert.equal(calls, 1);
+    assert.equal(monitor.state.error?.code, error.code);
+    advance(60_000);
+    await monitor.refresh("activity");
+    assert.equal(calls, 1);
+    advance(error.retryAfterMs ?? REFRESH_MS);
+    await monitor.refresh("activity");
+    assert.equal(calls, 2);
+    monitor.stop();
+  }
 });
 
 test("network failure retains same-owner data and backs off automatic refresh", async (t) => {
@@ -144,7 +223,7 @@ test("unknown auth failures cannot relabel cached quota as the current account",
   assert.ok(!monitor.state.error?.message.includes("sensitive"));
 });
 
-test("Retry-After applies to manual requests and survives stop/start", async (t) => {
+test("Retry-After applies to manual/completion requests and survives stop/start", async (t) => {
   let calls = 0;
   const { monitor, advance } = setup(t, { fetch: async () => {
     calls++;
@@ -154,9 +233,11 @@ test("Retry-After applies to manual requests and survives stop/start", async (t)
   await monitor.refresh();
   advance(REFRESH_MS);
   await monitor.refresh();
+  await monitor.refresh("activity");
   monitor.stop();
   monitor.start();
   await monitor.refresh();
+  await monitor.refresh("activity");
   assert.equal(calls, 1);
   assert.equal(monitor.state.error?.code, "rate-limited");
   advance(600_000);
@@ -164,12 +245,14 @@ test("Retry-After applies to manual requests and survives stop/start", async (t)
   assert.equal(calls, 2);
 });
 
-test("stop aborts requests; late results cannot overwrite a restarted monitor", async (t) => {
+test("stop cancels queued completion work; late results cannot affect a restarted monitor", async (t) => {
   const oldResponse = deferred<UsageSnapshot>();
   const fetching = deferred<void>();
   let oldSignal: AbortSignal | undefined;
   let first = true;
+  let calls = 0;
   const { monitor, advance } = setup(t, { fetch: async (_creds, signal) => {
+    calls++;
     if (first) {
       first = false;
       oldSignal = signal;
@@ -181,6 +264,7 @@ test("stop aborts requests; late results cannot overwrite a restarted monitor", 
   monitor.start();
   const oldRequest = monitor.refresh();
   await fetching.promise;
+  const queuedCompletion = monitor.refresh("activity");
   monitor.stop();
   assert.equal(oldSignal?.aborted, true);
   const stoppedSnapshot = monitor.state.snapshot;
@@ -189,7 +273,8 @@ test("stop aborts requests; late results cannot overwrite a restarted monitor", 
   monitor.start();
   await monitor.refresh();
   oldResponse.resolve(parseUsage(payload(1, 1), NOW));
-  await oldRequest;
+  await Promise.all([oldRequest, queuedCompletion]);
+  assert.equal(calls, 2);
   assert.equal(monitor.state.snapshot?.fiveHour?.remainingPercent, 10);
   assert.equal(monitor.state.refreshing, false);
 });

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import type { TestContext } from "node:test";
+import { setImmediate as flush } from "node:timers/promises";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import codexUsage, { isCodexModel } from "../src/index.ts";
-import { model, payload, plainTheme, token } from "./helpers.ts";
+import { model, NOW, payload, plainTheme, token } from "./helpers.ts";
 
 let previousOffline: string | undefined;
 beforeEach(() => {
@@ -80,13 +81,34 @@ test("factory is inert; TUI startup shows both bars using pi's credentials", asy
   assert.equal(h.notifications.length, 1);
 });
 
+test("each settled conversation refreshes without waiting, but tools and low-level run endings do not", async (t) => {
+  t.mock.method(Date, "now", () => NOW);
+  const h = harness(t);
+  h.event("session_start");
+  await h.command();
+  assert.equal(h.fetchCalls(), 1);
+  for (let completed = 0; completed < 3; completed++) {
+    h.event("agent_start");
+    // Tool turns and retry/continuation boundaries are not a finished reply.
+    h.event("turn_end");
+    h.event("agent_end");
+    await flush();
+    assert.equal(h.fetchCalls(), completed + 1);
+    // Do not block pi's event handling on the background HTTP request.
+    assert.equal(h.event("agent_settled"), undefined);
+    await flush();
+    assert.equal(h.fetchCalls(), completed + 2);
+  }
+  assert.equal(h.notifications.length, 1); // No notifications for background refresh.
+});
+
 test("model switch hides quota and does not query non-Codex providers", async (t) => {
   const h = harness(t);
   h.event("session_start");
   await h.command();
   h.ctx.model = model("openai");
   h.event("model_select");
-  h.event("agent_end");
+  h.event("agent_settled");
   await h.command();
   assert.equal(h.statuses.has("codex-usage"), false);
   assert.equal(h.fetchCalls(), 1);
@@ -96,7 +118,7 @@ for (const mode of ["print", "json", "rpc"] as const) {
   test(`${mode} mode does not resolve credentials or query quota`, async (t) => {
     const h = harness(t, { mode });
     h.event("session_start");
-    h.event("agent_end");
+    h.event("agent_settled");
     await h.command();
     assert.equal(h.authCalls(), 0);
     assert.equal(h.fetchCalls(), 0);
@@ -119,6 +141,7 @@ test("offline mode avoids all auth/network work", async (t) => {
   const h = harness(t);
   process.env.PI_OFFLINE = "1";
   h.event("session_start");
+  h.event("agent_settled");
   await h.command();
   assert.equal(h.fetchCalls(), 0);
   assert.equal(h.authCalls(), 0);
@@ -132,7 +155,7 @@ test("off and repeated shutdown are safe and clean up the resize listener", asyn
   await h.command();
   await h.command("off");
   assert.equal(h.statuses.size, 0);
-  h.event("agent_end");
+  h.event("agent_settled");
   await h.command("status");
   assert.equal(h.fetchCalls(), 1);
   h.event("session_shutdown");

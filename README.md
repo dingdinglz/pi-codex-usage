@@ -16,7 +16,7 @@ The extension's UI currently uses Simplified Chinese: `剩余` means **remaining
 - **Native footer integration:** adds an extension status without replacing the existing path, token statistics, model information, or other extension statuses.
 - **Color-coded bars:** green above 30%, yellow above 10% up to 30%, and red at 10% or below.
 - **Responsive layout:** shortens bars in narrow terminals, falling back to percentages when needed.
-- **Background refresh:** polls every 5 minutes, with rate-limited updates after agent runs and a manual refresh command.
+- **Background refresh:** keeps 5-minute polling and refreshes after every completed conversation, plus a manual refresh command.
 - **Lifecycle cleanup:** hides and stops querying when you switch to another provider; releases timers and cancels quota requests on shutdown, reload, or session replacement.
 
 ## Installation
@@ -71,9 +71,10 @@ For a local-path installation, use `pi remove /absolute/path/to/pi-codex-usage` 
 
 ### Refresh behavior
 
-- Normal polling runs every **5 minutes**. After an agent run, the extension also attempts an update, with at least **60 seconds** between automatic requests.
-- Manual refreshes have a **5-second** minimum interval. Concurrent requests within one instance are coalesced.
-- Failures back off for **5–30 minutes**. HTTP 429 `Retry-After` also applies to manual refreshes, provider switching, and off/on toggles within the same extension instance.
+- Normal polling remains every **5 minutes**. Every completed conversation also triggers a refresh via `agent_settled`, after tool calls, automatic retries, and queued continuations finish. Completion refreshes no longer have the former **60-second** minimum interval.
+- Only one quota request runs at a time. If a conversation finishes while a query is in flight, one fresh query is queued after it completes; further completion events while waiting are coalesced into that follow-up.
+- Manual refreshes keep their **5-second** minimum interval and reuse an in-flight request.
+- Automatic refreshes, including conversation-completion refreshes, still respect **5–30 minutes** of failure backoff. HTTP 429 `Retry-After` also applies to manual refreshes, provider switching, and off/on toggles within the same extension instance.
 - Each pi process has its own monitor. If you keep many instances open, use `off` to leave only one polling.
 
 ### Reading the status
