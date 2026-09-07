@@ -47,7 +47,7 @@ pi install -l git:github.com/dingdinglz/pi-codex-usage
 
 项目级安装需要信任项目后才能加载。
 
-也可以在本地仓库目录运行 `pi install .`，或者用 `pi -e ./src/index.ts` 临时试用。本地安装保存路径引用而不是复制代码，请保留仓库目录。
+也可以在本地仓库目录运行 `pi install .`，或者用 `pi -e ./index.ts` 临时试用。本地安装保存路径引用而不是复制代码，请保留仓库目录。使用根目录入口后，pi 扩展列表会显示 `pi-codex-usage`，而不是 `src`。
 
 ### 更新或卸载
 

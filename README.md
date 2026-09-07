@@ -47,7 +47,7 @@ pi install -l git:github.com/dingdinglz/pi-codex-usage
 
 Project-local packages load only after the project is trusted.
 
-From a local checkout, use `pi install .` or try `pi -e ./src/index.ts`. Local installation stores a path reference rather than copying the source, so keep the checkout in place.
+From a local checkout, use `pi install .` or try `pi -e ./index.ts`. Local installation stores a path reference rather than copying the source, so keep the checkout in place. The root entry makes pi's extension list show `pi-codex-usage` instead of `src`.
 
 ### Update or uninstall
 

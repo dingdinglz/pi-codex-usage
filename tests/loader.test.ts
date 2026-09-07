@@ -22,5 +22,8 @@ test("pi's real extension loader accepts the package without starting network wo
   const result = loader.getExtensions();
   assert.deepEqual(result.errors, []);
   assert.equal(result.extensions.length, 1);
+  // A root index entry makes pi's compact label "pi-codex-usage", not "src".
+  assert.equal(result.extensions[0]?.path, resolve("index.ts"));
+  assert.ok(result.extensions[0]?.commands.has("codex-usage"));
   assert.equal(fetches, 0);
 });
