@@ -1,11 +1,19 @@
 {
   "name": "pi-codex-usage",
   "version": "0.1.0",
-  "description": "Codex OAuth quota progress bars in pi's footer",
+  "description": "A pi extension that shows Codex 5-hour and weekly remaining quotas as footer progress bars using your existing OAuth login.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package", "pi-extension", "codex", "quota"],
-  "files": ["src", "README.md", "LICENSE"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dingdinglz/pi-codex-usage.git"
+  },
+  "homepage": "https://github.com/dingdinglz/pi-codex-usage#readme",
+  "bugs": {
+    "url": "https://github.com/dingdinglz/pi-codex-usage/issues"
+  },
+  "keywords": ["pi-package", "pi-extension", "pi-coding-agent", "codex", "openai", "oauth", "quota-monitor", "terminal", "typescript"],
+  "files": ["src", "README.md", "README.zh-CN.md", "LICENSE"],
   "pi": {
     "extensions": ["./src/index.ts"]
   },
